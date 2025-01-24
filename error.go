@@ -17,13 +17,18 @@ package wheeltimer
 
 import "errors"
 
+type timeoutError struct{}
+
+func (timeoutError) Error() string { return `timed out` }
+func (timeoutError) Timeout() bool { return true }
+
 var (
 	// ErrDisposed is returned when an operation is performed on a disposed
 	// queue.
 	ErrDisposed = errors.New(`queue: disposed`)
 
 	// ErrTimeout is returned when an applicable queue operation times out.
-	ErrTimeout = errors.New(`queue: poll timed out`)
+	ErrTimeout = timeoutError{}
 
 	// ErrEmpty is returned when queue is empty
 	ErrEmpty = errors.New(`queue: empty`)

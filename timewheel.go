@@ -27,10 +27,6 @@ const (
 	timeoutStateExpired
 )
 
-const (
-	MPSC_CHUNK_SIZE = 1024
-)
-
 type WheelTimer struct {
 	*option
 
@@ -76,8 +72,8 @@ func NewWheelTimer(tickDuration time.Duration, ticksPerWheel uint32, opts ...Whe
 		tickDuration:      tickDuration,
 		wheel:             wheel,
 		mask:              mask,
-		timeouts:          NewRingBuffer(MPSC_CHUNK_SIZE),
-		cancelledTimeouts: NewRingBuffer(MPSC_CHUNK_SIZE),
+		timeouts:          NewRingBuffer(o.ringBufferSize, o.ringBufferOptions...),
+		cancelledTimeouts: NewRingBuffer(o.ringBufferSize, o.ringBufferOptions...),
 		option:            o,
 		closedCh:          make(chan struct{}),
 	}
@@ -162,6 +158,10 @@ func (tw *WheelTimer) State() workerState {
 	return workerState(tw.workerState.Load())
 }
 
+func (tw *WheelTimer) PendingTimeouts() int64 {
+	return tw.pendingTimeouts.Load()
+}
+
 func (tw *WheelTimer) run() {
 	tw.startTime.Store(time.Now())
 	tw.startTimeInitializer.Done()
@@ -218,7 +218,7 @@ func (tw *WheelTimer) waitForNextTick() time.Duration {
 			}
 		}
 
-		// 微秒sleep在不同的系统上有不同的精度, 但是毫秒sleep是比较稳定的
+		// microsecond sleep has different precision on different systems, but millisecond sleep is more stable
 		time.Sleep(time.Duration(sleepTimeMs))
 	}
 }

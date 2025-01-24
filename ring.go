@@ -58,6 +58,7 @@ type RingBuffer struct {
 	mask, disposed uint64
 	_padding3      [8]uint64 // nolint: unused // cache line padding
 	nodes          nodes
+	option         *ringOption // must be the last field, otherwise it will break the cache line alignment
 }
 
 func (rb *RingBuffer) init(size uint64) {
@@ -101,6 +102,8 @@ L:
 				break L
 			}
 		default:
+			// this error does not need to be handled, because it always returns nil when timeout is 0.
+			_ = rb.option.waitStrategy.WaitFor(0)
 			pos = atomic.LoadUint64(&rb.queue)
 		}
 
@@ -113,6 +116,7 @@ L:
 
 	n.data = item
 	atomic.StoreUint64(&n.position, pos+1)
+	rb.option.waitStrategy.SignalAll()
 	return true, nil
 }
 
@@ -136,12 +140,12 @@ func (rb *RingBuffer) Poll(timeout time.Duration) (interface{}, error) {
 // PollNonBlocking will return the next item in the queue.
 // This call will unblock when an item is added to the queue,
 // Dispose is called on the queue, queue is empty, or the timeout is reached. An
-// error will be returned if the queue is disposed or a timeout occurs or queue is empty.
+// error will be returned if the queue is disposed, a timeout occurs or queue is empty.
 func (rb *RingBuffer) PollNonBlocking(timeout time.Duration) (interface{}, error) {
 	return rb.poll(timeout, true)
 }
 
-func (rb *RingBuffer) poll(timeout time.Duration, nonBlocking bool) (interface{}, error) {
+func (rb *RingBuffer) poll(timeout time.Duration, checkEmpty bool) (interface{}, error) {
 	var (
 		n     *node
 		pos   = atomic.LoadUint64(&rb.dequeue)
@@ -156,6 +160,10 @@ L:
 			return nil, ErrDisposed
 		}
 
+		if checkEmpty && atomic.LoadUint64(&rb.queue) == pos {
+			return nil, ErrEmpty
+		}
+
 		n = &rb.nodes[pos&rb.mask]
 		seq := atomic.LoadUint64(&n.position)
 		switch dif := seq - (pos + 1); {
@@ -164,8 +172,9 @@ L:
 				break L
 			}
 		default:
-			if nonBlocking {
-				return nil, ErrEmpty
+			err := rb.option.waitStrategy.WaitFor(timeout)
+			if err != nil {
+				return nil, err
 			}
 			pos = atomic.LoadUint64(&rb.dequeue)
 		}
@@ -179,6 +188,7 @@ L:
 	data := n.data
 	n.data = nil
 	atomic.StoreUint64(&n.position, pos+rb.mask+1)
+	rb.option.waitStrategy.SignalAll()
 	return data, nil
 }
 
@@ -207,8 +217,15 @@ func (rb *RingBuffer) IsDisposed() bool {
 
 // NewRingBuffer will allocate, initialize, and return a ring buffer
 // with the specified size.
-func NewRingBuffer(size uint64) *RingBuffer {
-	rb := &RingBuffer{}
+func NewRingBuffer(size uint64, opts ...RingOption) *RingBuffer {
+	o := defaultRingOptions()
+	for _, opt := range opts {
+		opt(o)
+	}
+
+	rb := &RingBuffer{
+		option: o,
+	}
 	rb.init(size)
 	return rb
 }
