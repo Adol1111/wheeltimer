@@ -9,6 +9,7 @@ import (
 const (
 	// DefaultMaxPendingTimeouts is the default maximum number of pending timeouts.
 	DefaultMaxPendingTimeouts = 512
+	DefaultRingBufferSize     = 1024
 )
 
 type option struct {
@@ -16,6 +17,8 @@ type option struct {
 	executor           Executor
 	panicHandler       PanicHandler
 	logger             *slog.Logger
+	ringBufferSize     uint64
+	ringBufferOptions  []RingOption
 }
 
 type WheelTimerOption func(*option)
@@ -44,6 +47,18 @@ func WithMaxPendingTimeouts(maxPendingTimeouts int64) WheelTimerOption {
 	}
 }
 
+func WithRingBufferSize(size uint64) WheelTimerOption {
+	return func(o *option) {
+		o.ringBufferSize = size
+	}
+}
+
+func WithRingBufferOptions(opts ...RingOption) WheelTimerOption {
+	return func(o *option) {
+		o.ringBufferOptions = opts
+	}
+}
+
 type Executor interface {
 	Execute(task func())
 }
@@ -65,5 +80,6 @@ func newDefaultOption() *option {
 		},
 		logger:             logger,
 		maxPendingTimeouts: DefaultMaxPendingTimeouts,
+		ringBufferSize:     DefaultRingBufferSize,
 	}
 }
